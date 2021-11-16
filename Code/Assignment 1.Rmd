@@ -1,0 +1,527 @@
+---
+title: "R Notebook"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+library("ggplot2")
+library("R.matlab")
+library("reshape2") 
+library("pracma") 
+library("plot.matrix")
+library("MASS")
+library("ggcorrplot")
+library("cowplot")
+library("corrplot")
+library("Rfast")
+library("factoextra")
+
+# Global variables
+N <- 240
+V <- 441
+x1 <- 21
+x2 <- 21
+nsrcs <- 6
+```
+# Question 1.1
+```{r}
+# function that generate TCs
+generateTC <- function(ones_onsets, DO, timeseries) 
+{
+	stim <- numeric(timeseries)
+	for(i in 1:length(ones_onsets))
+	{
+		stim[(ones_onsets[i]+1):(DO+ones_onsets[i])] <- c(replicate(DO,1))
+   	}
+	return(stim)
+}
+```
+
+```{r}
+AV <- c(0, 20, 0, 0, 0, 0)
+IV <- c(30, 45, 60, 40, 40, 40)
+DO <- c(15, 20, 25, 15, 20, 25)
+TC <- matrix(0, nrow = 240, ncol = 6)
+# Generate TCs
+for (i in 1:6) {
+  TC[,i] <- generateTC(seq(AV[i], N, by = IV[i]), DO[i], N)[1:N]
+}
+
+TC <- data.frame(TC)
+```
+
+```{r}
+par(mfrow=c(3,2))
+
+# Standardize TC and plot TCs
+for (i in 1:6)
+{
+  TC[,i] <- (TC[,i] - mean(TC[,i])) / sd(TC[,i]);
+  plot(TC[, i], typ="l", main=paste("TC", i), ylab=paste("Temporal Source", i))
+}
+```
+# Question 1.2
+```{r}
+corrplot(cor(TC), method = 'color', order = 'alphabet', title="\nCorrelation Matrix", type = "lower", tl.srt = 30)
+```
+# Question 1.3
+```{r, echo=TRUE, fig.height=2.5, fig.width=4}
+# Construct tmpSM
+tmpSM <- array(0, c(6, 21, 21))
+tmpSM[1, 2:6, 2:6] = 1
+tmpSM[2, 2:6, 15:19] = 1
+tmpSM[3, 8:13, 2:6] = 1
+tmpSM[4, 8:13, 15:19] = 1
+tmpSM[5, 15:19, 2:6] = 1
+tmpSM[6, 15:19, 15:19] = 1
+
+# Plot SMs in six subplots
+par(mfrow=c(2, 3))
+for (i in 1:6)
+{
+  plot(tmpSM[i,,], main=paste("tmpSM",i), xlab=NA, ylab=NA, border=NA)
+}
+```
+
+```{r, echo=TRUE, fig.height=2.5, fig.width=2.5}
+# plot 6 vectored SMs to show independence
+SM <- matrix(c(c(tmpSM[1,,]), c(tmpSM[2,,]), c(tmpSM[3,,]), c(tmpSM[4,,]), c(tmpSM[5,,]), c(tmpSM[6,,])), 6, 21*21, byrow=TRUE)
+
+corrplot(cor(t(SM)), main="\nSM Correlation Heatmap", method="color")
+```
+# Question 1.4
+```{r, echo=TRUE, fig.height=3, fig.width=5}
+# Construct Gamma t and Gamma s
+set.seed(10)
+Gamma_t = matrix(rnorm(240*6, mean=0, sd=0.25**0.5), 240, 6)
+Gamma_s = matrix(rnorm(6*441, mean=0, sd=0.015**0.5), 6, 441)
+
+# Plot correlation
+par(mfrow=c(1, 2))
+corrplot(cor(Gamma_t), main="\n\n\n\nTemporal Noise", 
+         xlab=NA, ylab=NA, method="color")
+corrplot(cor(t(Gamma_s)), main="\n\n\n\nSpatial Noise", 
+         xlab=NA, ylab=NA, method="color")
+```
+
+```{r, echo=TRUE, fig.height=2, fig.width=4}
+df = data.frame(c(Gamma_t))
+# Plot histogram of both noise source
+gamma_t_plot <- ggplot(df, aes(c(c.Gamma_t.)))+
+  geom_histogram(aes(y=..density..),
+  binwidth=0.15, color="darkblue", fill="lightblue") +
+  labs(title="Distribution of Temporal Noise",x="Value", y = "Density") +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = (0.25)**0.5)) +
+  geom_vline(xintercept = (1.96)*(0.25)**0.5, color="red") + 
+  geom_vline(xintercept = -(1.96)*(0.25)**0.5, color="red")
+
+df = data.frame(c(Gamma_s))
+gamma_s_plot <-ggplot(df, aes(c(c.Gamma_s.)))+
+  geom_histogram(aes(y=..density..),
+  binwidth=0.05, color="darkblue", fill="lightblue") +
+  labs(title="Distribution of Spatial Noise",x="Value", y = "Density") +
+  stat_function(fun = dnorm, args = list(mean = 0, sd = (0.015)**0.5)) +
+  geom_vline(xintercept = (1.96)*(0.015)**0.5, color="red") + 
+  geom_vline(xintercept = -(1.96)*(0.015)**0.5, color="red")
+
+plot_grid(gamma_t_plot, gamma_s_plot)
+```
+
+```{r, echo=TRUE, fig.height=3, fig.width=2.5}
+Gamma_ts <- Gamma_t%*%Gamma_s
+# Check correlation of the product of Gamma t and Gamma s
+corr <- cor(Gamma_ts)
+
+# Randomly sample 10 variables to visualise
+samples <- sample (c(1:441), size=10, replace=F)
+corrplot(corr[samples, samples], method="color", main="\nCorrelation between 441 variables (Sampled)", type = "lower", tl.srt = 30)
+```
+
+# Question 1.5
+```{r}
+# Generate a synthetic dataset X
+TC <- as.matrix(TC, 6, 240)
+X <- (TC + Gamma_t) %*% (SM + Gamma_s)
+
+# Check compatibility
+c(dim(TC), dim(Gamma_s))
+c(dim(Gamma_t), dim(SM))
+dim(X)
+```
+
+```{r}
+# Plot at least 100 randomly selected time-series from X
+samples <- data.frame(n=1:240, X[, sample.int(240, 100)])
+samples <- melt(samples, id.vars = "n")
+ggplot(samples, aes(x=n, y=value, col=variable)) + geom_line() + 
+  labs(title="100 Ramdonly Selected Time-series", x="", y="Value") +
+  theme(plot.margin = margin(1.5,.5,1.5,.5, "cm"),
+        legend.key.height= unit(0.1, 'cm'),
+        legend.key.width= unit(0.1, 'cm'))
+```
+
+```{r, echo=TRUE, fig.height=1.5, fig.width=2.6}
+# plot variance of all 441 variables
+variances <- colVars(X)
+variances <- data.frame(n=1:441, variances)
+ggplot(variances, aes(x=n, y=variances)) +geom_point(color="steelblue") + 
+  labs(title="Variance of 441 variables", x="Variables", y="Variances")
+```
+```{r}
+# Standardize X
+X = scale(X)
+```
+
+
+# Question 2.1
+```{r}
+D <- as.matrix(TC)
+
+# Estimate A using least square estimation
+A_lsr <- abs(solve(t(D)%*%D)%*%t(D)%*%X)
+ 
+# Calculate D_lsr
+D_lsr <- X%*%t(A_lsr)
+```
+
+```{r, echo=TRUE, fig.height=4, fig.width=3.5}
+pal <- colorRampPalette(c("blue", "yellow"))
+layout(matrix(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 6, 2, ncol = 2), 
+       widths=c(2.5,5))
+par(mar = c(2,5,1.5,1.5))
+for (i in 1:6) 
+{
+  A_lsr_p <- A_lsr[i,]
+  D_lsr_p <- D_lsr[,i]
+  dim(A_lsr_p) <- c(21, 21)
+  plot(A_lsr_p, border=F, col = pal(40), xlab=NA, ylab=NA, 
+       main=paste("Retrieved Spatial Map",i))
+  
+  plot(D_lsr_p, type = "l", xlab=NA, ylab=NA, 
+       main=paste("Retrieved Time Course",i))
+}
+```
+
+```{r, echo=TRUE, fig.height=1.65, fig.width=4}
+df <- data.frame(D_lsr[,3], X[,30])
+colnames(df) <- c("D_lsr_3", "X_30")
+plot_1 <- ggplot(df, aes(y=D_lsr_3, x=X_30)) + geom_point(color = "steelblue") +
+  labs(title=expression(paste(D[lsr], "  column 3 vs X column 30")),
+       x=expression(paste(D[lsr], " column 3")), y = "X column 30") + geom_smooth()
+
+df <- data.frame(D_lsr[,4], X[,30])
+colnames(df) <- c("D_lsr_4", "X_30")
+plot_2 <- ggplot(df, aes(y=D_lsr_4, x=X_30)) + geom_point(color = "steelblue") +
+  labs(title=expression(paste(D[lsr], "  column 4 vs X column 30")),
+       x=expression(paste(D[lsr], " column 4")), y = "X column 30") + geom_smooth()
+
+suppressMessages(plot_grid(plot_1, plot_2))
+```
+# Question 2.2
+```{r}
+lambda <- 0.5
+I <- matrix(0, 6, 6)
+diag(I) <- 1
+# Compute scalar value
+penalty_term <- lambda * V
+# Estimate A_rr and D_rr
+A_rr <- abs(solve(t(D)%*%D + penalty_term*I)%*%t(D)%*%X)
+D_rr <- X%*%t(A_rr)
+
+C_tlsr = 0
+C_trr = 0
+for (i in 1:6)
+{
+  C_tlsr[i] = cor(TC[,i], D_lsr[,i])
+  C_trr[i] = cor(TC[,i], D_rr[,i])
+}
+
+# Compare the sum of these two correlation vectors
+print(paste("Sum of C_tlsr:", sum(C_tlsr)))
+print(paste("Sum of C_trr:", sum(C_trr)))
+```
+
+```{r, echo=TRUE, fig.height=1.3, fig.width=4}
+# Set lambda value as 1000 for plot visualisation
+lambda <- 1000
+# Compute scalar value
+penalty_term <- lambda * V
+# Estimate A_rr and D_rr
+A_rr_1000 <- abs(solve(t(D)%*%D + penalty_term*I)%*%t(D)%*%X)
+
+# plot and compare the shrinkage of variables
+values <- data.frame(n=1:441, val=A_lsr[1,])
+A_lsr_plot <- ggplot(values, aes(x=n, y=val)) +
+  geom_point(color = "steelblue") + 
+  labs(title=expression(A[lsr]), y="Values", x="Index")
+
+values <- data.frame(n=1:441, val=A_rr_1000[1,])
+A_rr_plot <- ggplot(values, aes(x=n, y=val)) +
+  geom_point(color = "steelblue") + 
+  labs(title=expression(paste(A[rr], "   ", lambda, " = 1000")), y="Values",
+       x="Index")
+
+suppressMessages(plot_grid(A_lsr_plot, A_rr_plot))
+```
+# Question 2.3
+```{r}
+# Select ρ between 0 and 1 with an interval of 0.05
+rho_values <- seq(from=0, to=1, by=0.05)
+MSE <- rep(0, 21)
+```
+
+```{r}
+for (j in 1:21)
+{
+  rho <- rho_values[j]
+  step <- 1/(norm(TC %*% t(TC)) * 1.1)
+  thr <- rho*N*step
+  Ao <- matrix(0, nsrcs, 1)
+  A <- matrix(0, nsrcs, 1)
+  Alr <- matrix(0, nsrcs, x1*x2)
+  MSE_temp <- rep(0, 10)
+  
+  # Generate new standardized X in terms of Gamma t and Gamma s
+  for (a in 1:10) {
+    set.seed(a)
+    Gamma_t_temp = matrix(rnorm(240*6, mean=0, sd=0.25**0.5), 240, 6)
+    Gamma_s_temp = matrix(rnorm(6*441, mean=0, sd=0.015**0.5), 6, 441)
+    X_temp <- (TC + Gamma_t_temp) %*% (SM + Gamma_s_temp)
+    X_temp <- scale(X_temp)
+    
+    for (k in 1:(x1*x2)) {
+      A <- Ao+step*(t(TC) %*% (X_temp[,k]-(TC%*%Ao)))
+      A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+      
+      for (i in 1:10) {
+        Ao <- A
+        A <- Ao+step * (t(TC)%*%(X_temp[,k]-(TC%*%Ao)))
+        A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+        }
+      Alr[,k] <- A
+    }
+    Alr <- Alr
+    Dlr <- X_temp%*%t(Alr)
+    MSE_temp[a] <- norm((X_temp - Dlr%*%Alr), type='F')^2/(N*V)
+  }
+  
+  # Compute the average MSE of the current ρ
+  MSE[j] <- mean(MSE_temp)
+}
+```
+
+```{r, echo=TRUE, fig.height=2, fig.width=4}
+# plot average of MSE over these 10 realizations against each value of ρ
+
+df <- data.frame(rho_values, MSE)
+plot_1 <- ggplot(df, aes(x=rho_values, y=MSE)) + geom_point(color="steelblue") +
+  labs(title="Average MSE for each ρ", x="ρ values", y="Average MSE")
+
+df <- df[10:21,]
+plot_2 <- ggplot(df, aes(x=rho_values, y=MSE)) + geom_point(color="steelblue") +
+  labs(title="Average MSE for each ρ (Zoomed In)", x="ρ values", y="Average MSE")
+
+suppressMessages(plot_grid(plot_1, plot_2))
+```
+# Question 2.4
+```{r}
+# Estimate A_lr and D_lr using the selected ρ value
+rho <- 0.6
+step <- 1/(norm(TC %*% t(TC)) * 1.1)
+thr <- rho*N*step
+Ao <- matrix(0, nsrcs, 1)
+A <- matrix(0, nsrcs, 1)
+A_lr <- matrix(0, nsrcs, x1*x2)
+
+for (k in 1:(x1*x2)) {
+  A <- Ao+step*(t(TC) %*% (X[,k]-(TC%*%Ao)))
+  A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+  
+  for (i in 1:10) {
+    Ao <- A
+    A <- Ao+step * (t(TC)%*%(X[,k]-(TC%*%Ao)))
+    A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+  }
+  A_lr[,k] <- A
+}
+A_lr <- abs(A_lr)
+D_lr <- X%*%t(A_lr)
+```
+
+```{r}
+# estimate four correlation vectors
+C_trr <- 0
+C_srr <- 0
+C_tlr <- 0
+C_slr <- 0
+
+for (i in 1:6)
+{
+  C_trr[i] = cor(TC[,i], D_rr[,i])
+  C_tlr[i] = cor(TC[,i], D_lr[,i])
+  C_srr[i] = cor(SM[i,], A_rr[i,])
+  C_slr[i] = cor(SM[i,], A_lr[i,])  
+}
+sum(C_trr)
+sum(C_tlr)
+sum(C_srr)
+sum(C_slr)
+```
+
+```{r, echo=TRUE, fig.height=5, fig.width=5.5}
+layout(matrix(seq(from=1, to=24, by=1), 6, 4, ncol = 4), 
+       widths=c(3,5, 3, 5))
+par(mar = c(3,5,1.5,2))
+for (i in 1:6) {
+  A_rr_p <- A_rr[i,]
+  A_lr_p <- A_lr[i,]
+  dim(A_rr_p) <- c(21, 21)
+  dim(A_lr_p) <- c(21, 21)
+  plot(A_rr_p, border=F, col = pal(40), xlab=NA, ylab=NA, 
+       cex.main=1.6, cex.lab=1.5, cex.axis=1.2, main=paste("Arr",i))
+  plot(D_rr[,i], xlab=NA, ylab=NA, main=paste("Drr",i), 
+       cex.main=1.6, cex.lab=1.5, cex.axis=1.2, col="blue", type="l")
+  plot(A_lr_p, border=F, col = pal(40), xlab=NA, ylab=NA, 
+       cex.main=1.6, cex.lab=1.5, cex.axis=1.2, main=paste("Alr",i))
+  plot(D_lr[,i], xlab=NA, ylab=NA, main=paste("Dlr",i),
+       cex.main=1.6, cex.lab=1.5, cex.axis=1.2, col="blue", type="l")
+}
+```
+# Question 2.5 using SVD
+```{r, echo=TRUE, fig.height=5, fig.width=6}
+
+pcr <- svd(D)
+Z <- pcr$u
+par(mfrow=c(6, 2), mar = c(2,3,1.5,2))
+
+# Plot the regressors in Z and source TCs side by side
+for (i in 1:6) {
+  plot(TC[,i], type="l", main=paste("TC", i), cex.main=1.5, cex.lab=1.5, cex.axis=1.5)
+  plot(Z[,i], type="l", main=paste("Z", i), cex.main=1.5, cex.lab=1.5, cex.axis=1.5)
+}
+```
+```{r, echo=TRUE, fig.height=1.5, fig.width=3}
+ev <- pcr$d
+ev <- data.frame(index=seq(1, 6), ev)
+plot(ev, col="blue", main="Eigenvalues of each PC", xlab="PCs", ylab="Eigenvalues",
+     cex.main=1.4, cex.lab=1.4, cex.axis=1.4)
+```
+
+```{r}
+# Estimate A_pcr and D_pcr using the ρ = 0.001
+matrix <- Z
+rho <- 0.001
+step <- 1/(norm(Z %*% t(Z)) * 1.1)
+thr <- rho*N*step
+Ao <- matrix(0, nsrcs, 1)
+A <- matrix(0, nsrcs, 1)
+A_pcr <- matrix(0, nsrcs, x1*x2)
+
+for (k in 1:(x1*x2)) {
+  A <- Ao+step*(t(matrix) %*% (X[,k]-(matrix%*%Ao)))
+  A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+  
+  for (i in 1:10) {
+    Ao <- A
+    A <- Ao+step * (t(matrix)%*%(X[,k]-(matrix%*%Ao)))
+    A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+  }
+  A_pcr[,k] <- A
+}
+A_pcr <- abs(A_pcr)
+D_pcr <- X%*%t(A_pcr)
+```
+
+```{r, echo=TRUE, fig.height=4, fig.width=3.5}
+layout(matrix(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 6, 2, ncol = 2), 
+       widths=c(0.8,2))
+par(mar = c(2,5,1.5,1.5))
+
+# Plot the results of DPCR and APCR side by side
+for (i in 1:6) 
+{
+  A_pcr_p <- A_pcr[i,]
+  D_pcr_p <- D_pcr[,i]
+  dim(A_pcr_p) <- c(21, 21)
+  plot(A_pcr_p, border=F, col = pal(40), xlab=NA, ylab=NA, 
+       main=paste("A pcr",i))
+  
+  plot(D_pcr_p, type = "l", xlab=NA, ylab=NA, 
+       main=paste("D pcr",i))
+}
+```
+
+# Question 2.5 using PRCOMP
+```{r, echo=TRUE, fig.height=1.5, fig.width=4}
+m <- prcomp(D, center = TRUE, scale.=TRUE)
+Z <- m$x
+pev <- fviz_eig(m) + 
+  labs(title="Percent of explained variances of PCs", x="PCs")
+eigenvalues <- fviz_eig(m, choice="eigenvalue", geom="line") + 
+  labs(title="Eigenvalue of each PC", x="PCS")
+suppressMessages(plot_grid(pev, eigenvalues))
+```
+
+```{r, echo=TRUE, fig.height=7, fig.width=6}
+par(mfrow=c(6, 2), mar = c(2,3,1.5,2))
+
+# Plot the regressors in Z and source TCs side by side
+for (i in 1:6) {
+  plot(TC[,i], type="l", main=paste("TC", i), cex.main=1.5, cex.lab=1.5, cex.axis=1.5)
+  plot(Z[,i], type="l", main=paste("Z", i), cex.main=1.5, cex.lab=1.5, cex.axis=1.5)
+}
+```
+
+```{r}
+# Estimate A_pcr and D_pcr using the ρ = 0.001
+matrix <- Z
+rho <- 0.001
+step <- 1/(norm(Z %*% t(Z)) * 1.1)
+thr <- rho*N*step
+Ao <- matrix(0, nsrcs, 1)
+A <- matrix(0, nsrcs, 1)
+A_pcr <- matrix(0, nsrcs, x1*x2)
+
+for (k in 1:(x1*x2)) {
+  A <- Ao+step*(t(matrix) %*% (X[,k]-(matrix%*%Ao)))
+  A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+  
+  for (i in 1:10) {
+    Ao <- A
+    A <- Ao+step * (t(matrix)%*%(X[,k]-(matrix%*%Ao)))
+    A <- (1/(1+thr)) * (sign(A)*pmax(replicate(nsrcs, 0), abs(A)-thr))
+  }
+  A_pcr[,k] <- A
+}
+A_pcr <- abs(A_pcr)
+D_pcr <- X%*%t(A_pcr)
+```
+
+```{r, echo=TRUE, fig.height=4, fig.width=3.5}
+layout(matrix(c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), 6, 2, ncol = 2), 
+       widths=c(0.8,2))
+par(mar = c(2,5,1.5,1.5))
+
+# Plot the results of DPCR and APCR side by side
+for (i in 1:6) 
+{
+  A_pcr_p <- A_pcr[i,]
+  D_pcr_p <- D_pcr[,i]
+  dim(A_pcr_p) <- c(21, 21)
+  plot(A_pcr_p, border=F, col = pal(40), xlab=NA, ylab=NA, 
+       main=paste("A pcr",i))
+  
+  plot(D_pcr_p, type = "l", xlab=NA, ylab=NA, 
+       main=paste("D pcr",i))
+}
+```
+
+```{r}
+df <- data.frame(m$rotation)
+df
+```
+
